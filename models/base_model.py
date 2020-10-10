@@ -2,6 +2,8 @@ import os
 import torch
 from collections import OrderedDict
 from abc import ABC, abstractmethod
+import re
+
 from . import networks
 
 
@@ -221,7 +223,34 @@ class BaseModel(ABC):
                 # patch InstanceNorm checkpoints prior to 0.4
                 # for key in list(state_dict.keys()):  # need to copy keys here because we mutate in loop
                 #    self.__patch_instance_norm_state_dict(state_dict, net, key.split('.'))
-                net.load_state_dict(state_dict)
+
+                # (@elcorto) Hotfix for:
+                #     Traceback (most recent call last):
+                #       File "./test.py", line 57, in <module>
+                #         model.setup(opt)               # regular setup: load and print networks; create schedulers
+                #       File "/path/to/soft/git/contrastive-unpaired-translation/models/base_model.py", line 101, in setup
+                #         self.load_networks(load_suffix)
+                #       File "/path/to/soft/git/contrastive-unpaired-translation/models/base_model.py", line 234, in load_networks
+                #         net.load_state_dict(state_dict)
+                #       File "/path/to/soft/lib/python3.8/site-packages/torch/nn/modules/module.py", line 846, in load_state_dict
+                #         raise RuntimeError('Error(s) in loading state_dict for {}:\n\t{}'.format(
+                #     RuntimeError: Error(s) in loading state_dict for ResnetGenerator:
+                #             Missing key(s) in state_dict: "model.1.weight", "model.1.bias", ...,
+                #                                           "model.30.weight", "model.30.bias".
+                #             Unexpected key(s) in state_dict: "module.model.1.weight", "module.model.1.bias", ...,
+                #                                              "module.model.30.weight", "module.model.30.bias".
+                #
+                # This is of course a hack. People with more knowledge of the
+                # code should provide a proper patch. Tested: pytorch 1.5.1,
+                # 1.6.0 .
+                #
+                fixed_state_dict = dict()
+                for key,val in state_dict.items():
+                    newkey = re.sub('^module\.', '', key)
+                    assert newkey not in fixed_state_dict
+                    fixed_state_dict[newkey] = val
+                net.load_state_dict(fixed_state_dict)
+                del fixed_state_dict
 
     def print_networks(self, verbose):
         """Print the total number of parameters in the network and (if verbose) network architecture
